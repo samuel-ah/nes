@@ -56,6 +56,7 @@ SPRITE_PAGE = $0200
     MISC_FLAGS: .res 1                 ; ------TI
                                        ;       |+- 1: Ignore input this frame
                                        ;       +-- 1: Title graphics currently loaded
+    NAMETABLE: .res 1
     GAMEMODE: .res 1                   ; 0: Title screen
                                        ; 1: Game
                                        ; 2: 2P Game
@@ -124,35 +125,6 @@ TEST_SPRITE_INIT:
         sta SPRITE_PAGE, X
         inx
         cpx #$04
-        bne :-
-
-FILL_TEST_NT:
-    lda PPU_STATUS
-    lda #$20                           ; $2000 start of first nametable
-    sta PPU_ADDR
-    lda #$00
-    sta PPU_ADDR
-    ldy #$08
-    ldx #$00
-    lda #$00
-
-    :   sta PPU_DATA
-        dex
-        bne :-
-        dey
-        bne :-
-
-FILL_TEST_AT:
-    lda PPU_STATUS
-    lda #$23                           ; $23c0 start of first attribute table
-    sta PPU_ADDR
-    lda #$c0
-    sta PPU_ADDR
-    ldx #$40                           ; 64
-    lda #$00
-
-    :   sta PPU_DATA
-        dex
         bne :-
 
 GAME_STATE_INIT:
@@ -358,7 +330,7 @@ LOAD_TGFX_NT:
         dey
         bne :-
 
-AT_TOP:
+LOAD_TGFX_AT:
     lda PPU_STATUS
     lda #$23
     sta PPU_ADDR
@@ -383,9 +355,6 @@ AT_TOP:
         dex
         bne :-
         rts
-
-    lda #$00
-
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -412,14 +381,7 @@ SPRITE_DMA:
     lda #$02                           ; start OAM DMA from page at $0200
     sta OAM_DMA
 
-; HORIZ_SCROLL:
-;     lda PPU_STATUS
-;     inc XSCROLL
-;     lda XSCROLL
-;     sta PPU_SCROLL
-;     lda #$00
-;     sta PPU_SCROLL
-Y_SCROLL:
+SCROLL_UPDATE:
     lda PPU_STATUS
     lda #$00
     sta PPU_SCROLL
@@ -427,7 +389,8 @@ Y_SCROLL:
     sta PPU_SCROLL
 
 SELECT_NAMETABLE:
-    lda #%10010000
+    lda NAMETABLE
+    ora #%10010000
     sta PPU_CTRL
 
 ENABLE_RENDER:
@@ -462,7 +425,7 @@ PALETTES:
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
     SPRITE_PALETTES:
-        .byte $0f, $12, $12, $12       ; black, blue, blue, blue
+        .byte $0f, $30, $10, $00       ; black, blue, blue, blue
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
