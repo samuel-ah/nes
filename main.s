@@ -31,6 +31,10 @@ PAD_LEFT = $02
 PAD_RIGHT = $01
 
 SPRITE_PAGE = $0200
+SPRITE_0_YPOS = $0200
+SPRITE_0_TILE = $0201
+SPRITE_0_ATTR = $0202
+SPRITE_0_X = $0203
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -48,23 +52,25 @@ SPRITE_PAGE = $0200
 .segment "STARTUP"
 
 .segment "ZEROPAGE"
-    NMI_FLAGS: .res 1                  ; ----RPSN
-                                       ;     |||+- 0: NMI occurred
-                                       ;     ||+-- 1: Safe to enter NMI
-                                       ;     |+--- 1: Update palettes during NMI
-                                       ;     +---- 1: Disable rendering during NMI
-    MISC_FLAGS: .res 1                 ; ------TI
+    m_nmi_flags: .res 1                ; ---WRPSN
+                                       ;    ||||+- 0: NMI occurred
+                                       ;    |||+-- 1: Safe to enter NMI
+                                       ;    ||+--- 1: Update palettes during NMI
+                                       ;    |+---- 1: Disable rendering during NMI
+                                       ;    +------1: Load new row this frame
+    m_misc_flags: .res 1               ; ------TI
                                        ;       |+- 1: Ignore input this frame
                                        ;       +-- 1: Title graphics currently loaded
-    NAMETABLE: .res 1
-    GAMEMODE: .res 1                   ; 0: Title screen
+    m_nametable: .res 1                  ; Current nametable selected
+    m_gamemode: .res 1                   ; 0: Title screen
                                        ; 1: Game
                                        ; 2: 2P Game
                                        ; 3: Game over
-    XSCROLL: .res 1
-    YSCROLL: .res 1
-    JOYPAD_1_BUTTONS: .res 1
-    JOYPAD_2_BUTTONS: .res 1
+    m_xscroll: .res 1
+    m_yscroll: .res 1
+    m_joypad_1_buttons: .res 1
+    m_joypad_2_buttons: .res 1
+    m_title_selection: .res 1
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -129,185 +135,237 @@ TEST_SPRITE_INIT:
 
 GAME_STATE_INIT:
     lda #$00
-    sta GAMEMODE
+    sta m_gamemode
 
-ENABLE_RENDER_INIT:
+ENABLE_NMI_INIT:
     lda #%10010000                     ; nmi enable
     sta PPU_CTRL
 
-    lda #%00011110                     ; sprite enable
-    sta PPU_MASK
-
 NMI_FLAGS_INIT:
-    lda #%00000001
-    sta NMI_FLAGS
+    lda #%00000001                     
+    sta m_nmi_flags
+
+RENDER_INIT:
+    jsr ENABLE_RENDER                  ; Enable rendering only after startup routine done
 
 MAIN:                                  
+    nop
+    nop
     nop
     jsr READ_JOYPAD_1
 
 LOGIC_STATE:
-    ldx GAMEMODE
+    ldx m_gamemode
     beq LOGIC_TITLE
-    dex
-    beq LOGIC_1P_GAME
-    dex
-    beq LOGIC_2P_GAME
-    jmp LOGIC_GAME_OVER
+    jmp LOGIC_MAIN_GAME
+    ; dex
+    ; beq LOGIC_2P_GAME
+    ; jmp LOGIC_GAME_OVER
 
 LOGIC_TITLE:
-    lda MISC_FLAGS
+    lda m_misc_flags                     ; title graphics loaded?
     and #%00000010
     bne TGFX_LOADED
 
-LOAD_TGFX:
-    jsr DISABLE_RENDER
-    jsr DISABLE_INPUT
-    jsr NMI_WAIT_SAFE
-    jsr LOAD_TGFX_NT
-    jsr SET_TGFX_LOADED
-    jsr ENABLE_RENDER
-    jsr ENABLE_INPUT
+    :   jsr DISABLE_RENDER             ; disable render
+        jsr DISABLE_INPUT              ; disable input
+        jsr NMI_WAIT_SAFE              ; wait one frame
+        jsr LOAD_TGFX_NT               ; load title graphics
+        jsr SET_TGFX_LOADED            ; set title graphics loaded flag
+        
+        lda #$ef                       ; set YSCROLL to 239
+        sta m_yscroll
 
-    ; set selection to 0
+        jsr ENABLE_RENDER              ; enable render
+        jsr ENABLE_INPUT               ; enable input
 
-    lda #$ef
-    sta YSCROLL
-    jmp LOGIC_TITLE_DONE
+        lda #$00                       ; set selection to 0
+        sta m_title_selection  
 
+        jmp LOGIC_TITLE_DONE
+    
 TGFX_LOADED:
-    lda YSCROLL
+    lda m_yscroll                        ; YSCROLL == 0?
     beq TITLE_ANIM_DONE
-    lda JOYPAD_1_BUTTONS
-    bne TITLE_SKIP_ANIM
 
-TITLE_ANIM_CONTINUE:
-    dec YSCROLL
-    jsr ENABLE_INPUT
-    jmp LOGIC_TITLE_DONE
+    :   lda m_joypad_1_buttons           ; any buttons pressed?
+        bne TITLE_SKIP_ANIM
 
-TITLE_SKIP_ANIM:
-    lda #$00
-    sta YSCROLL
-    jsr DISABLE_INPUT
-    jmp LOGIC_TITLE_DONE
+        :   dec m_yscroll                ; decrease scroll 
+            jsr ENABLE_INPUT           ; enable input
+            jmp LOGIC_TITLE_DONE
+    
+    TITLE_SKIP_ANIM:
+        lda #$00                       ; set YSCROLL to 0
+        sta m_yscroll
+        jsr DISABLE_INPUT              ; disable input
+        jmp LOGIC_TITLE_DONE
 
 TITLE_ANIM_DONE:
-    lda JOYPAD_1_BUTTONS
-    and #%00101100 ; Select, up, or down pressed
-    bne TITLE_CHANGE_SELECTION
+    lda m_misc_flags                     ; input enabled?
+    and #%00000001
+    beq TITLE_INPUT_ENABLED
 
-TITLE_CHECK_START:
-    lda JOYPAD_1_BUTTONS
-    and #%10010000 ; A or Start pressed
-    bne TITLE_START_GAME
-    jsr ENABLE_INPUT
-    jmp LOGIC_TITLE_DONE
+    :   lda m_joypad_1_buttons           ; any buttons pressed?
+        bne LOGIC_TITLE_DONE
 
-TITLE_CHANGE_SELECTION:
-    jmp LOGIC_TITLE_DONE
-;     lda MISC_FLAGS
-;     and #%00000001
-;     beq LOGIC_TITLE_DONE
-;     lda TITLE_GAME_SELECTION
-;     eor #%00000001
-;     sta TITLE_GAME_SELECTION
-;     jsr SET_NT_UPDATE
-;     jsr TITLE_SELECTION_NT_UPDATE
-;     jsr DISABLE_INPUT
-;     jmp LOGIC_TITLE_DONE
+        :   jsr ENABLE_INPUT           ; enable input
+            jmp LOGIC_TITLE_DONE       
+    
+    TITLE_INPUT_ENABLED:
+        lda m_joypad_1_buttons           ; select/up/down pressed?
+        and #%00101100
+        bne TITLE_CHANGE_SELECTION
 
+        :   lda m_joypad_1_buttons       ; start/A pressed?
+            and #%10010000
+            bne TITLE_START_GAME
+            jmp LOGIC_TITLE_DONE
+
+    TITLE_CHANGE_SELECTION:
+        jsr DISABLE_INPUT
+        lda m_title_selection   ; flip gamemode selection
+        eor #%00000001
+        sta m_title_selection
+        bne TITLE_SELECTION_1
+    
+    TITLE_SELECTION_0:
+        lda #$20                       ; y position 0
+        sta SPRITE_PAGE
+        jmp LOGIC_TITLE_DONE
+
+    TITLE_SELECTION_1: 
+        lda #$28                       ; y position 1
+        sta SPRITE_PAGE
+        jmp LOGIC_TITLE_DONE
+    
 TITLE_START_GAME:
+    jsr SET_GAMEMODE_MAIN_GAME
     jmp LOGIC_TITLE_DONE
-    ;;;;
 
 LOGIC_TITLE_DONE:
-LOGIC_1P_GAME:
-LOGIC_2P_GAME:
-LOGIC_GAME_OVER:
+    jmp WAIT_NEXT_FRAME
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+LOGIC_MAIN_GAME:
+    inc m_yscroll
+    lda m_yscroll
+    cmp #$f0
+    bne CONTINUE_SCROLL
+
+    :   lda #$00
+        sta m_yscroll
+        jsr SWAP_NAMETABLE
+    
+CONTINUE_SCROLL:
+    lda m_yscroll
+    and #%00000111
+    bne NO_GFX_UPDATE
+    
+    :   jsr SET_ROW_LOAD
+
+NO_GFX_UPDATE:
     jmp WAIT_NEXT_FRAME
 
 WAIT_NEXT_FRAME:
-    jsr NMI_WAIT_SAFE
+    jsr NMI_WAIT_SAFE                  ; wait for next frame
     jmp MAIN
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 NMI_WAIT_RESET:
-    bit PPU_STATUS
+    bit PPU_STATUS                     ; bit 7 of PPU_STATUS
     bpl NMI_WAIT_RESET
     rts
 ;
 NMI_WAIT_SAFE:
-    lda NMI_FLAGS
+    lda m_nmi_flags
     ora #%00000010
-    sta NMI_FLAGS
+    sta m_nmi_flags
 
-    :   lda NMI_FLAGS                  ; NMI_FLAGS == 0 when returning from NMI
+    :   lda m_nmi_flags                ; m_nmi_flags == 0 when returning from NMI
         bne :-
     
-    inc NMI_FLAGS                      ; set unsafe to enter NMI, clear 'NMI occurred'
+    inc m_nmi_flags                    ; set unsafe to enter NMI, clear 'NMI occurred'
     rts
 ;
 READ_JOYPAD_1:
     lda #$01
     sta JOYPAD_1                       ; write 1 then 0 to controller port to start serial transfer
-    sta JOYPAD_1_BUTTONS               ; store 1 in buttons
+    sta m_joypad_1_buttons             ; store 1 in buttons
     lsr A                              ; A: 1 -> 0
     sta JOYPAD_1
 
     :   lda JOYPAD_1
         lsr A                          ; bit 0 -> C
-        rol JOYPAD_1_BUTTONS           ; C -> bit 0 in JOYPAD_1_BUTTONS, shift all other to left
+        rol m_joypad_1_buttons         ; C -> bit 0 in m_joypad_1_buttons, shift all other to left
         bcc :-                         ; if sentinel bit shifted out end loop
     
     rts
 ;
 DISABLE_INPUT:
-    lda MISC_FLAGS
+    lda m_misc_flags
     ora #%00000001
-    sta MISC_FLAGS
+    sta m_misc_flags
     rts
 ;
 ENABLE_INPUT:
-    lda MISC_FLAGS
+    lda m_misc_flags
     and #%11111110
-    sta MISC_FLAGS
+    sta m_misc_flags
     rts
 ;
 DISABLE_RENDER:
-    lda NMI_FLAGS
+    lda m_nmi_flags
     ora #%00001000
-    sta NMI_FLAGS
+    sta m_nmi_flags
     rts
 ;
 ENABLE_RENDER:
-    lda NMI_FLAGS
+    lda m_nmi_flags
     and #%11110111
-    sta NMI_FLAGS
+    sta m_nmi_flags
     rts
 ;
 SET_TGFX_LOADED:
-    lda MISC_FLAGS
+    lda m_misc_flags
     ora #%00000010
-    sta MISC_FLAGS
+    sta m_misc_flags
     rts
 ;
 CLEAR_TGFX_LOADED:
-    lda MISC_FLAGS
+    lda m_misc_flags
     and #%11111101
-    sta MISC_FLAGS
+    sta m_misc_flags
     rts
 ;
+SET_GAMEMODE_MAIN_GAME:
+    lda #$01
+    sta m_gamemode
+    rts
+;
+SET_ROW_LOAD:
+    lda m_nmi_flags
+    ora #%00010000
+    sta m_nmi_flags
+    rts
+;
+SWAP_NAMETABLE:
+    lda m_nametable
+    eor #%00000010
+    sta m_nametable
+    rts 
+;
 LOAD_TGFX_NT:
-    lda PPU_STATUS
+    lda PPU_STATUS                     ; Fill upper NT
     lda #$20
     sta PPU_ADDR
     lda #$00
     sta PPU_ADDR
     ldx #$00
     ldy #$04
-    lda #$00
+    lda #$01
     
     :   sta PPU_DATA
         dex
@@ -315,14 +373,14 @@ LOAD_TGFX_NT:
         dey
         bne :-
 
-    lda PPU_STATUS
+    lda PPU_STATUS                     ; Fill lower NT
     lda #$28
     sta PPU_ADDR
     lda #$00
     sta PPU_ADDR
     ldx #$00
     ldy #$04
-    lda #$01
+    lda #$00
     
     :   sta PPU_DATA
         dex
@@ -349,13 +407,14 @@ LOAD_TGFX_AT:
     lda #$c0
     sta PPU_ADDR
     ldx #$40
-    lda #%10101010
+    lda #$00
 
     :   sta PPU_DATA
         dex
         bne :-
         rts
 ;
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 NMI:
@@ -371,7 +430,7 @@ DISABLE_RENDER:
     sta PPU_MASK
 
 CHECK_NMI_SAFE:
-    lda NMI_FLAGS
+    lda m_nmi_flags
     and #%00000010
     beq NMI_DONE
 
@@ -381,20 +440,22 @@ SPRITE_DMA:
     lda #$02                           ; start OAM DMA from page at $0200
     sta OAM_DMA
 
+
+
 SCROLL_UPDATE:
     lda PPU_STATUS
-    lda #$00
+    lda m_xscroll
     sta PPU_SCROLL
-    lda YSCROLL
+    lda m_yscroll
     sta PPU_SCROLL
 
 SELECT_NAMETABLE:
-    lda NAMETABLE
+    lda m_nametable
     ora #%10010000
     sta PPU_CTRL
 
 ENABLE_RENDER:
-    lda NMI_FLAGS
+    lda m_nmi_flags
     and #%00001000
     bne NMI_DONE
     lda #%00011110
@@ -402,7 +463,7 @@ ENABLE_RENDER:
 
 NMI_DONE:
     lda #$00
-    sta NMI_FLAGS
+    sta m_nmi_flags
 
     pla
     tay
@@ -420,12 +481,12 @@ SPRITES_DEFAULT:
 
 PALETTES:
     BG_PALETTES:
-        .byte $0f, $30, $10, $00       ; black, green
+        .byte $0f, $30, $10, $31       ; black, white, light gray, dark gray
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
     SPRITE_PALETTES:
-        .byte $0f, $30, $10, $00       ; black, blue, blue, blue
+        .byte $0f, $2a, $1a, $0a       ; black, greens
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty

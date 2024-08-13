@@ -2,7 +2,7 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Build NES",
+			"label": "Build 6502",
 			"type": "shell",
 			"command": "C:\\cc65\\bin\\cl65 --verbose --target nes -o demo.nes main.s; .\\fceux64 demo.nes; if (Test-Path demo.nes.deb) {Remove-Item demo.nes.deb}; if (Test-Path main.o) {Remove-Item main.o}",
 			"group": {
