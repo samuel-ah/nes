@@ -52,12 +52,15 @@ SPRITE_0_X = $0203
 .segment "STARTUP"
 
 .segment "ZEROPAGE"
-    m_nmi_flags: .res 1                ; ---WRPSN
-                                       ;    ||||+- 0: NMI occurred
-                                       ;    |||+-- 1: Safe to enter NMI
-                                       ;    ||+--- 1: Update palettes during NMI
-                                       ;    |+---- 1: Disable rendering during NMI
-                                       ;    +------1: Load new row this frame
+    m_nmi_flags: .res 1                ; -DIWRPSN
+                                       ;  ||||||+- 0: NMI occurred
+                                       ;  |||||+-- 1: Safe to enter NMI
+                                       ;  ||||+--- 1: Update palettes during NMI
+                                       ;  |||+---- 1: Disable rendering during NMI
+                                       ;  ||+----- 1: Load new row this frame
+                                       ;  |+------ 1: Increment YSCROLL this frame
+                                       ;  +------- 1: Decrement YSCROLL this frame
+
     m_misc_flags: .res 1               ; ------TI
                                        ;       |+- 1: Ignore input this frame
                                        ;       +-- 1: Title graphics currently loaded
@@ -71,6 +74,9 @@ SPRITE_0_X = $0203
     m_joypad_1_buttons: .res 1
     m_joypad_2_buttons: .res 1
     m_title_selection: .res 1
+    m_next_row_index: .res 1
+    m_row_hi: .res 1
+    m_row_lo: .res 1
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -158,9 +164,6 @@ LOGIC_STATE:
     ldx m_gamemode
     beq LOGIC_TITLE
     jmp LOGIC_MAIN_GAME
-    ; dex
-    ; beq LOGIC_2P_GAME
-    ; jmp LOGIC_GAME_OVER
 
 LOGIC_TITLE:
     lda m_misc_flags                     ; title graphics loaded?
@@ -191,7 +194,7 @@ TGFX_LOADED:
     :   lda m_joypad_1_buttons           ; any buttons pressed?
         bne TITLE_SKIP_ANIM
 
-        :   dec m_yscroll                ; decrease scroll 
+        :   jsr SET_SCROLL_DEC                ; decrease scroll 
             jsr ENABLE_INPUT           ; enable input
             jmp LOGIC_TITLE_DONE
     
@@ -249,7 +252,7 @@ LOGIC_TITLE_DONE:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 LOGIC_MAIN_GAME:
-    inc m_yscroll
+    jsr SET_SCROLL_INC
     lda m_yscroll
     cmp #$f0
     bne CONTINUE_SCROLL
@@ -357,6 +360,18 @@ SWAP_NAMETABLE:
     sta m_nametable
     rts 
 ;
+SET_SCROLL_INC:
+    lda m_nmi_flags
+    ora #%00100000
+    sta m_nmi_flags
+    rts
+;
+SET_SCROLL_DEC:
+    lda m_nmi_flags
+    ora #%01000000
+    sta m_nmi_flags
+    rts
+;
 LOAD_TGFX_NT:
     lda PPU_STATUS                     ; Fill upper NT
     lda #$20
@@ -440,7 +455,47 @@ SPRITE_DMA:
     lda #$02                           ; start OAM DMA from page at $0200
     sta OAM_DMA
 
+LOAD_GFX_ROW:
+    lda m_nmi_flags
+    and #%00010000
+    beq SCROLL_UPDATE                  ; flag for next row to be loaded
 
+    :   lda m_yscroll                  ; find HI offset from $20 or $28, bits 7, 6 of YSCROLL -> m_row_hi (every 8 rows of tiles adds $0100 to PPU_ADDR)
+        lsr A
+        lsr A
+        lsr A
+        lsr A
+        lsr A
+        lsr A
+        sta m_row_hi
+
+        lda m_nametable                ; determine whether to offset from $20 or $28, load new row in nametable not currently being used
+        eor #%000000010
+        asl A
+        asl A
+        clc 
+        adc #$20
+        clc
+        adc m_row_hi
+        sta m_row_hi                   ; determine final hi byte of PPU_ADDR
+
+        lda m_yscroll
+        asl A
+        asl A
+        sta m_row_lo
+
+        lda PPU_STATUS
+        lda m_row_hi
+        sta PPU_ADDR
+        lda m_row_lo
+        sta PPU_ADDR
+
+        ldx #$20
+        lda #$01
+
+        :   sta PPU_DATA
+            dex
+            bne :-
 
 SCROLL_UPDATE:
     lda PPU_STATUS
@@ -448,6 +503,20 @@ SCROLL_UPDATE:
     sta PPU_SCROLL
     lda m_yscroll
     sta PPU_SCROLL
+
+INC_SCROLL:
+    lda m_nmi_flags
+    and #%00100000
+    beq DEC_SCROLL
+
+    :   inc m_yscroll
+
+DEC_SCROLL:
+    lda m_nmi_flags
+    and #%01000000
+    beq SELECT_NAMETABLE
+
+    :   dec m_yscroll
 
 SELECT_NAMETABLE:
     lda m_nametable
