@@ -13,7 +13,7 @@ PPU_STATUS = $2002                     ; PPU status flags
 OAM_ADDR = $2003                       ; points to address of OAM being used, usually ignored and set to $00 as DMA is better
 OAM_DATA = $2004                       ; OAM data read/write
 PPU_SCROLL = $2005
-PPU_ADDR = $2006                       ; PPU accessing address read/write (2 byte address, HI byte first. Read from $2002 before this.)
+PPU_ADDR = $2006                       ; PPU accessing address read/write
 PPU_DATA = $2007                       ; PPU data write
 DMC_FREQ = $4010
 OAM_DMA = $4014
@@ -35,6 +35,8 @@ SPRITE_0_YPOS = $0200
 SPRITE_0_TILE = $0201
 SPRITE_0_ATTR = $0202
 SPRITE_0_X = $0203
+
+F_BUF = $0300
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -64,17 +66,13 @@ SPRITE_0_X = $0203
     m_misc_flags: .res 1               ; ------TI
                                        ;       |+- 1: Ignore input this frame
                                        ;       +-- 1: Title graphics currently loaded
-    m_nametable: .res 1                  ; Current nametable selected
-    m_gamemode: .res 1                   ; 0: Title screen
+    m_nametable: .res 1                ; Current nametable selected
+    m_gamemode: .res 1                 ; 0: Title screen
                                        ; 1: Game
-                                       ; 2: 2P Game
-                                       ; 3: Game over
     m_xscroll: .res 1
     m_yscroll: .res 1
     m_joypad_1_buttons: .res 1
-    m_joypad_2_buttons: .res 1
     m_title_selection: .res 1
-    m_next_row_index: .res 1
     m_row_hi: .res 1
     m_row_lo: .res 1
 
@@ -244,6 +242,15 @@ TITLE_ANIM_DONE:
     
 TITLE_START_GAME:
     jsr SET_GAMEMODE_MAIN_GAME
+
+    ldx #$00
+
+    :   lda TEST_ROW, X
+        sta F_BUF, X
+        inx
+        cpx #$20
+        bne :-
+    
     jmp LOGIC_TITLE_DONE
 
 LOGIC_TITLE_DONE:
@@ -430,119 +437,11 @@ LOAD_TGFX_AT:
         rts
 ;
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-NMI:
-.scope NMI_LOCAL
-    pha
-    txa
-    pha
-    tya
-    pha
-
-DISABLE_RENDER:
-    lda #$00
-    sta PPU_MASK
-
-CHECK_NMI_SAFE:
-    lda m_nmi_flags
-    and #%00000010
-    beq NMI_DONE
-
-SPRITE_DMA:
-    lda #$00                           ; set index into DMA page to 00
-    sta OAM_ADDR
-    lda #$02                           ; start OAM DMA from page at $0200
-    sta OAM_DMA
-
-LOAD_GFX_ROW:
-    lda m_nmi_flags
-    and #%00010000
-    beq SCROLL_UPDATE                  ; flag for next row to be loaded
-
-    :   lda m_yscroll                  ; find HI offset from $20 or $28, bits 7, 6 of YSCROLL -> m_row_hi (every 8 rows of tiles adds $0100 to PPU_ADDR)
-        lsr A
-        lsr A
-        lsr A
-        lsr A
-        lsr A
-        lsr A
-        sta m_row_hi
-
-        lda m_nametable                ; determine whether to offset from $20 or $28, load new row in nametable not currently being used
-        eor #%000000010
-        asl A
-        asl A
-        clc 
-        adc #$20
-        clc
-        adc m_row_hi
-        sta m_row_hi                   ; determine final hi byte of PPU_ADDR
-
-        lda m_yscroll
-        asl A
-        asl A
-        sta m_row_lo
-
-        lda PPU_STATUS
-        lda m_row_hi
-        sta PPU_ADDR
-        lda m_row_lo
-        sta PPU_ADDR
-
-        ldx #$20
-        lda #$01
-
-        :   sta PPU_DATA
-            dex
-            bne :-
-
-SCROLL_UPDATE:
-    lda PPU_STATUS
-    lda m_xscroll
-    sta PPU_SCROLL
-    lda m_yscroll
-    sta PPU_SCROLL
-
-INC_SCROLL:
-    lda m_nmi_flags
-    and #%00100000
-    beq DEC_SCROLL
-
-    :   inc m_yscroll
-
-DEC_SCROLL:
-    lda m_nmi_flags
-    and #%01000000
-    beq SELECT_NAMETABLE
-
-    :   dec m_yscroll
-
-SELECT_NAMETABLE:
-    lda m_nametable
-    ora #%10010000
-    sta PPU_CTRL
-
-ENABLE_RENDER:
-    lda m_nmi_flags
-    and #%00001000
-    bne NMI_DONE
-    lda #%00011110
-    sta PPU_MASK
-
-NMI_DONE:
-    lda #$00
-    sta m_nmi_flags
-
-    pla
-    tay
-    pla
-    tax
-    pla
-    
-    rti
-.endscope
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+TEST_ROW:
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
 
 SPRITES_DEFAULT:
         ; y    tile attr x
@@ -560,7 +459,7 @@ PALETTES:
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+.include "nmi.s"
 
 .segment "CHARS"
-.incbin "chars.chr"
+    .incbin "chars.chr"
