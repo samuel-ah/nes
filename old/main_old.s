@@ -54,7 +54,6 @@ F_BUF = $0300
 .segment "STARTUP"
 
 .segment "ZEROPAGE"
-    m_fcount: .res 1
     m_nmi_flags: .res 1                ; -DIWRPSN
                                        ;  ||||||+- 0: NMI occurred
                                        ;  |||||+-- 1: Safe to enter NMI
@@ -76,8 +75,8 @@ F_BUF = $0300
     m_title_selection: .res 1
     
     ;
-        m_row_hi: .res 1
-        m_row_lo: .res 1
+    m_row_hi: .res 1
+    m_row_lo: .res 1
     ;
 
     m_rbuf_idx: .res 1
@@ -86,8 +85,6 @@ F_BUF = $0300
         m_block_lo: .res 1
         m_block_hi: .res 1
     ;
-
-    m_prng_seed: .res 2
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -150,14 +147,9 @@ TEST_SPRITE_INIT:
         cpx #$04
         bne :-
 
-FCOUNT_INIT:
-    ldx #$00
-    
-    :   lda FCOUNTER, X
-        sta SPRITE_PAGE + 4, X
-        inx
-        cpx #$08
-        bne :-
+; GAME_STATE_INIT:
+;     lda #$00
+;     sta m_gamemode
 
 ENABLE_NMI_INIT:
     lda #%10010000                     ; nmi enable
@@ -167,12 +159,6 @@ NMI_FLAGS_INIT:
     lda #%00000001                     
     sta m_nmi_flags
 
-SEED_INIT:
-    lda #$39
-    sta m_prng_seed
-    lda #$00
-    sta m_prng_seed + 1
-
 RENDER_INIT:
     jsr ENABLE_RENDER                  ; Enable rendering only after startup routine done
 
@@ -181,7 +167,6 @@ MAIN:
     nop
     nop
     jsr READ_JOYPAD_1
-    jsr UPDATE_FCOUNT
 
 LOGIC_STATE:
     ldx m_gamemode
@@ -268,15 +253,17 @@ TITLE_ANIM_DONE:
 TITLE_START_GAME:
     jsr SET_GAMEMODE_MAIN_GAME
     jsr CLEAR_TGFX_LOADED
-    lda m_prng_seed ; try force a random starting seed 
-    eor m_fcount
-    bne :+
-    clc
-    adc #$01
-:   sta m_prng_seed
-    lda #$08
-    sta m_rbuf_idx
-    jmp LOGIC_MAIN_GAME
+
+    ldx #$00
+
+    :   lda TEST_ROW, X
+        sta F_BUF, X
+        inx
+        cpx #$20
+        bne :-
+
+    ; jsr SET_SCROLL_INC
+    jmp LOGIC_TITLE_DONE
 
 LOGIC_TITLE_DONE:
     jmp WAIT_NEXT_FRAME
@@ -301,40 +288,9 @@ NO_SCROLL_RESET:
     :   jsr SET_ROW_LOAD
 
 NO_ROW_LOAD:
-    lda m_rbuf_idx
-    cmp #$08
-    bne WAIT_NEXT_FRAME
-
-    :   jsr PRNG
-        and #%00001111 ; get number 0-15
-        clc
-        lsr A ; bit 0 -> C
-        sta m_block_hi ; num 0-7 -> high address byte
-        lda #$00 ; clear A
-        sta m_rbuf_idx ; zero row index
-        ror A ; C -> bit 7 in A
-        sta m_block_lo ; $00 or $80 -> low address byte
-        
-        lda #.lobyte(COURSE_BLOCKS)
-        clc
-        adc m_block_lo
-        sta m_block_lo
-        lda #.hibyte(COURSE_BLOCKS)
-        adc m_block_hi
-        sta m_block_hi
-
-        ldy #$00
-
-        :   lda (m_block_lo), Y ; copy 128 tiles to framebuffer
-            sta F_BUF, Y
-            iny
-            cpy #$80
-            bne :-
-
     jmp WAIT_NEXT_FRAME
 
 WAIT_NEXT_FRAME:
-    inc m_fcount
     jsr NMI_WAIT_SAFE                  ; wait for next frame
     jmp MAIN
 
@@ -435,39 +391,6 @@ SET_SCROLL_DEC:
     sta m_nmi_flags
     rts
 ;
-UPDATE_FCOUNT:
-    lda m_yscroll
-    and #%00001111
-    clc
-    adc #$10
-    sta SPRITE_PAGE + 9
-    lda m_yscroll
-    and #%11110000
-    lsr A
-    lsr A
-    lsr A
-    lsr A
-    clc
-    adc #$10
-    sta SPRITE_PAGE + 5
-    rts
-;
-PRNG:
-    ldy #$08
-    lda m_prng_seed
-
-    :   asl A
-        rol m_prng_seed + 1
-        bcc :+
-        eor #$39
-    
-    :   dey
-        bne :--
-    
-    sta m_prng_seed
-    cmp #$00
-    rts
-;
 LOAD_TGFX_NT:
     lda PPU_STATUS                     ; Fill upper NT
     lda #$20
@@ -528,13 +451,15 @@ LOAD_TGFX_AT:
 
 .include "nmi.s"
 
+TEST_ROW:
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+    .byte $10, $11, $12, $13, $14, $15, $16, $17
+
 SPRITES_DEFAULT:
         ; y    tile attr x
     .byte $20, $00, $00, $20
-
-FCOUNTER:
-    .byte $10, $10, $10, $10
-    .byte $10, $10, $10, $18
 
 PALETTES:
     BG_PALETTES:
@@ -548,7 +473,10 @@ PALETTES:
         .byte $0f, $00, $00, $00       ; empty
         .byte $0f, $00, $00, $00       ; empty
 
-.include "blocks.s"
+COURSE_BLOCKS:
+    .byte $ff, $ff, $ff, $ff, $ff, $ff, $ff, $ff
+    lda .hibyte(COURSE_BLOCKS)
+    lda .lobyte(COURSE_BLOCKS)
 
 .segment "CHARS"
     .incbin "chars.chr"

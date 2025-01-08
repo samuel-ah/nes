@@ -13,9 +13,7 @@ DISABLE_RENDER:
 CHECK_NMI_SAFE:
     lda m_nmi_flags
     and #%00000010
-    bne SPRITE_DMA
-
-    :   jmp NMI_DONE
+    beq NMI_DONE
 
 SPRITE_DMA:
     lda #$00                           ; set index into DMA page to 00
@@ -26,9 +24,7 @@ SPRITE_DMA:
 LOAD_GFX_ROW:
     lda m_nmi_flags
     and #%00010000
-    bne :++                  ; flag for next row to be loaded
-
-    :   jmp SCROLL_UPDATE
+    beq SCROLL_UPDATE                  ; flag for next row to be loaded
 
     :   lda m_yscroll                  ; find HI offset from $20 or $28, bits 7, 6 of YSCROLL -> m_row_hi (every 8 rows of tiles adds $0100 to PPU_ADDR)
         lsr A
@@ -60,53 +56,51 @@ LOAD_GFX_ROW:
         lda m_row_lo
         sta PPU_ADDR
 
-        ; ldx #$00 ; change to offset variable
+        ldx #$00 ; change to offset variable
 
-        ; :   lda F_BUF, X
-        ;     sta PPU_DATA
-        ;     inx
-        ;     cpx #$20
-        ;     bne :-
-
-        ;compute address for tile lookup
-
-        lda #$02
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-
-        lda m_rbuf_idx
-        asl A
-        asl A
-        asl A
-        asl A
-        tay
-
-        ldx #$00
-
-        :   lda F_BUF, Y
+        :   lda F_BUF, X
             sta PPU_DATA
             inx
-            iny
-            cpx #$10
+            cpx #$20
             bne :-
 
-        lda #$03
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
-        sta PPU_DATA
+        ; compute address for tile lookup
 
-        inc m_rbuf_idx
+        ; lda #$02
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+
+        ; lda m_rbuf_idx
+        ; asl A
+        ; asl A
+        ; asl A
+        ; asl A
+    
+        ; tax
+
+        ; :   lda F_BUF, Y
+        ;     sta PPU_DATA
+        ;     inx
+        ;     cpy #$10
+        ;     bne :-
+
+        ; lda #$03
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+        ; sta PPU_DATA
+
+        ; inc m_rbuf_idx
 
 SCROLL_UPDATE:
     lda PPU_STATUS
